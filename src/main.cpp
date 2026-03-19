@@ -1,6 +1,8 @@
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 
+#include "circa-solem/axis_gizmo.hpp"
+#include "circa-solem/orbit_path.hpp"
 #include "circa-solem/body.hpp"
 #include "circa-solem/body_registry.hpp"
 #include "circa-solem/camera.hpp"
@@ -52,7 +54,7 @@ static cs::Body make_earth() {
     b.mass      = 3.003e-6;
     b.radius_km = 6371.0;
     b.position  = {1.0, 0.0, 0.0};
-    b.velocity  = {0.0, 2.0 * static_cast<double>(M_PI), 0.0};
+    b.velocity  = {0.0, 0.0, -2.0 * static_cast<double>(M_PI)};
     b.color     = {0.2f, 0.5f, 1.0f};
     b.type      = cs::BodyType::SIMULATED;
     return b;
@@ -118,13 +120,15 @@ int main() {
     registry.add(make_earth());
 
     cs::SimClock clock;
-    cs::SimLoop  sim_loop{registry, clock, 1000.0};
+    cs::SimLoop  sim_loop{registry, clock, 50000.0};
 
     cs::Camera camera;
     camera.attachToWindow(window);
 
-    cs::Sphere   sphere;
-    cs::Starfield starfield;
+    cs::Sphere     sphere;
+    cs::Starfield  starfield;
+    cs::AxisGizmo  axis_gizmo;
+    cs::OrbitPath  earth_orbit{1.0f};
 
     cs::ShaderProgram phong_shader;
     if (!phong_shader.load(SHADERS_DIR "phong.vert", SHADERS_DIR "phong.frag")) {
@@ -137,6 +141,14 @@ int main() {
     cs::ShaderProgram star_shader;
     if (!star_shader.load(SHADERS_DIR "starfield.vert", SHADERS_DIR "starfield.frag")) {
         fprintf(stderr, "Failed to load starfield shaders\n");
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return EXIT_FAILURE;
+    }
+
+    cs::ShaderProgram flat_shader;
+    if (!flat_shader.load(SHADERS_DIR "flat.vert", SHADERS_DIR "flat.frag")) {
+        fprintf(stderr, "Failed to load flat shaders\n");
         glfwDestroyWindow(window);
         glfwTerminate();
         return EXIT_FAILURE;
@@ -209,6 +221,12 @@ int main() {
 
             sphere.draw();
         }
+
+        // ── Orbit path ────────────────────────────────────────────────────────
+        earth_orbit.draw(view, proj, flat_shader);
+
+        // ── Axis gizmo (world origin, always on top) ─────────────────────────
+        axis_gizmo.draw(view, proj, flat_shader);
 
         glfwSwapBuffers(window);
     }

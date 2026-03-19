@@ -5,7 +5,7 @@
 #include "circa-solem/integrator.hpp"
 
 #include <glm/glm.hpp>
-#include <cmath>
+#include <numbers>
 #include <vector>
 
 using Catch::Matchers::WithinRel;
@@ -13,7 +13,7 @@ using Catch::Matchers::WithinRel;
 // Unit system: AU, solar masses, Julian years.
 // G = 4π² in these units (Earth at 1 AU has period 1 yr with circular velocity 2π AU/yr).
 
-static constexpr double G_AU    = 4.0 * M_PI * M_PI;
+static constexpr double G_AU    = 4.0 * std::numbers::pi * std::numbers::pi;
 static constexpr double M_SUN   = 1.0;
 static constexpr double M_EARTH = 3.003e-6;  // solar masses
 
@@ -33,7 +33,7 @@ static cs::Body make_earth_circular() {
     b.name     = "Earth";
     b.mass     = M_EARTH;
     b.position = {1.0, 0.0, 0.0};
-    b.velocity = {0.0, 2.0 * M_PI, 0.0};
+    b.velocity = {0.0, 0.0, -2.0 * M_PI};
     b.type     = cs::BodyType::SIMULATED;
     return b;
 }

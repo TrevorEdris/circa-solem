@@ -31,7 +31,7 @@ private:
     static void scroll_callback(GLFWwindow* w, double xoff, double yoff);
 
     float     theta_       = 0.3f;   // azimuth (radians)
-    float     phi_         = 0.4f;   // elevation (radians)
+    float     phi_         = 0.8f;   // elevation (radians)
     float     radius_      = 3.0f;   // AU
     glm::vec3 focus_       = {0.0f, 0.0f, 0.0f};
 

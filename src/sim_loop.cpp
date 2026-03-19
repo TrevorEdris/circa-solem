@@ -1,5 +1,7 @@
 #include "circa-solem/sim_loop.hpp"
 
+#include <algorithm>
+
 namespace cs {
 
 SimLoop::SimLoop(BodyRegistry& registry, SimClock& clock, double warp_factor)
@@ -10,8 +12,10 @@ SimLoop::SimLoop(BodyRegistry& registry, SimClock& clock, double warp_factor)
 
 void SimLoop::tick(double wall_dt_seconds) {
     // Convert wall-clock delta to simulation years, scaled by warp.
+    // Cap to 120 substeps worth of accumulated time to prevent a runaway
+    // integration loop after a debugger pause, window drag, or slow first frame.
     const double sim_years = (wall_dt_seconds / kWallSecondsPerYear) * warp_factor_;
-    accumulated_years_ += sim_years;
+    accumulated_years_ = std::min(accumulated_years_ + sim_years, kSubstepYears * 120.0);
 
     // Advance in fixed substeps to maintain integrator accuracy.
     while (accumulated_years_ >= kSubstepYears) {

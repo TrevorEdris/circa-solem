@@ -62,6 +62,8 @@ target_link_libraries(circa-solem-core PUBLIC glm::glm)
 # GL-dependent source files are listed explicitly here.
 add_executable(circa-solem
     src/main.cpp
+    src/axis_gizmo.cpp
+    src/orbit_path.cpp
     src/shader_program.cpp
     src/sphere.cpp
     src/camera.cpp

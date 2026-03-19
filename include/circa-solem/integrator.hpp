@@ -3,6 +3,7 @@
 #include "circa-solem/body.hpp"
 
 #include <glm/glm.hpp>
+#include <numbers>
 #include <vector>
 
 namespace cs {
@@ -25,7 +26,7 @@ private:
     void compute_accelerations(const std::vector<Body>& bodies,
                                std::vector<glm::dvec3>& out_accel) const;
 
-    static constexpr double kG       = 4.0 * 3.14159265358979323846 * 3.14159265358979323846;
+    static constexpr double kG       = 4.0 * std::numbers::pi * std::numbers::pi;
     static constexpr double kEpsilon = 1e-4;  // AU — softening length
 };
 

@@ -7,7 +7,7 @@
 
 Two-body demo: Sun (1 M☉) + Earth (3.003×10⁻⁶ M☉) in circular orbit.
 - Earth initial position: (1, 0, 0) AU
-- Earth initial velocity: (0, 2π, 0) AU/yr — circular orbit velocity at 1 AU
+- Earth initial velocity: (0, 0, -2π) AU/yr — circular orbit velocity at 1 AU, XZ plane (Y-up convention)
 - Warp factor: 1000× (Earth completes one orbit in ~9 minutes wall-clock time)
 
 ## Unit Tests (automated)
