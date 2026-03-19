@@ -34,7 +34,7 @@ public:
     static constexpr int MERCURY = 199;
     static constexpr int VENUS   = 299;
     static constexpr int EARTH   = 399;
-    static constexpr int MARS    = 499;
+    static constexpr int MARS    = 4;    // Mars Barycenter (DE440 has 4, not 499)
     static constexpr int MOON    = 301;
     static constexpr int SUN     = 10;
 

@@ -2,24 +2,35 @@
 #include <GLFW/glfw3.h>
 
 #include "circa-solem/axis_gizmo.hpp"
-#include "circa-solem/orbit_path.hpp"
 #include "circa-solem/body.hpp"
 #include "circa-solem/body_registry.hpp"
 #include "circa-solem/camera.hpp"
-#include "circa-solem/integrator.hpp"
+#include "circa-solem/ephemeris_provider.hpp"
+#include "circa-solem/orbit_path.hpp"
+#include "circa-solem/orbit_trail.hpp"
+#include "circa-solem/scale_config.hpp"
 #include "circa-solem/shader_program.hpp"
 #include "circa-solem/sim_clock.hpp"
 #include "circa-solem/sim_loop.hpp"
+#include "circa-solem/solar_system_data.hpp"
 #include "circa-solem/sphere.hpp"
 #include "circa-solem/starfield.hpp"
+#include "circa-solem/sun_glow.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cmath>
+#include <cstring>
+#include <map>
+#include <string>
+#include <vector>
+
+// ── Callbacks ─────────────────────────────────────────────────────────────────
 
 static void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW error %d: %s\n", error, description);
@@ -33,40 +44,90 @@ static void GLAPIENTRY gl_debug_callback(
     fprintf(stderr, "GL [%u] %s\n", id, message);
 }
 
-// ── Body definitions ──────────────────────────────────────────────────────────
+// ── Shader uniform helpers ─────────────────────────────────────────────────────
 
-static cs::Body make_sun() {
-    cs::Body b;
-    b.name      = "Sun";
-    b.mass      = 1.0;
-    b.radius_km = 696000.0;
-    b.position  = {0.0, 0.0, 0.0};
-    b.velocity  = {0.0, 0.0, 0.0};
-    b.color     = {1.0f, 0.95f, 0.4f};
-    b.type      = cs::BodyType::SIMULATED;
-    return b;
-}
-
-static cs::Body make_earth() {
-    // Circular orbit at 1 AU: v = sqrt(G * M_sun / r) = 2π AU/yr
-    cs::Body b;
-    b.name      = "Earth";
-    b.mass      = 3.003e-6;
-    b.radius_km = 6371.0;
-    b.position  = {1.0, 0.0, 0.0};
-    b.velocity  = {0.0, 0.0, -2.0 * static_cast<double>(M_PI)};
-    b.color     = {0.2f, 0.5f, 1.0f};
-    b.type      = cs::BodyType::SIMULATED;
-    return b;
-}
-
-// ── Shader uniform helpers ────────────────────────────────────────────────────
-
-static void set_uniform_mat4(GLuint prog, const char* name, const glm::mat4& m) {
+static void set_mat4(GLuint prog, const char* name, const glm::mat4& m) {
     glUniformMatrix4fv(glGetUniformLocation(prog, name), 1, GL_FALSE, glm::value_ptr(m));
 }
-static void set_uniform_vec3(GLuint prog, const char* name, const glm::vec3& v) {
+static void set_vec3(GLuint prog, const char* name, const glm::vec3& v) {
     glUniform3fv(glGetUniformLocation(prog, name), 1, glm::value_ptr(v));
+}
+
+// ── Time warp ─────────────────────────────────────────────────────────────────
+
+static constexpr std::array<double, 8> kWarpLevels = {
+    0.0, 1.0, 10.0, 100.0, 1000.0, 10000.0, 50000.0, 100000.0
+};
+
+static void update_title(GLFWwindow* w, double warp) {
+    if (warp == 0.0) {
+        glfwSetWindowTitle(w, "Circa Solem — PAUSED");
+    } else {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "Circa Solem — %.0f\xc3\x97", warp); // ×
+        glfwSetWindowTitle(w, buf);
+    }
+}
+
+// ── Per-frame state accessible from GLFW callbacks ────────────────────────────
+
+struct AppState {
+    cs::SimLoop*   sim_loop      = nullptr;
+    cs::ScaleConfig* scale       = nullptr;
+    int            warp_idx      = 6;   // default 50,000×
+    int            prev_warp_idx = 6;
+    bool           trails_visible = true;
+    GLFWwindow*    window         = nullptr;
+};
+
+static AppState* g_state = nullptr;
+
+static void key_callback(GLFWwindow* w, int key, int /*scancode*/, int action, int /*mods*/) {
+    if (!g_state) return;
+
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+        glfwSetWindowShouldClose(w, GLFW_TRUE);
+        return;
+    }
+
+    if (action != GLFW_PRESS) return;
+
+    switch (key) {
+    case GLFW_KEY_PERIOD:   // '.' — increase warp
+        if (g_state->warp_idx < (int)kWarpLevels.size() - 1) {
+            ++g_state->warp_idx;
+            g_state->sim_loop->setWarpFactor(kWarpLevels[g_state->warp_idx]);
+            update_title(w, g_state->sim_loop->warpFactor());
+        }
+        break;
+    case GLFW_KEY_COMMA:    // ',' — decrease warp
+        if (g_state->warp_idx > 0) {
+            --g_state->warp_idx;
+            g_state->sim_loop->setWarpFactor(kWarpLevels[g_state->warp_idx]);
+            update_title(w, g_state->sim_loop->warpFactor());
+        }
+        break;
+    case GLFW_KEY_SPACE:    // pause / resume
+        if (kWarpLevels[g_state->warp_idx] != 0.0) {
+            g_state->prev_warp_idx = g_state->warp_idx;
+            g_state->warp_idx      = 0;
+        } else {
+            g_state->warp_idx      = g_state->prev_warp_idx;
+        }
+        g_state->sim_loop->setWarpFactor(kWarpLevels[g_state->warp_idx]);
+        update_title(w, g_state->sim_loop->warpFactor());
+        break;
+    case GLFW_KEY_T:        // toggle scale
+        if (g_state->scale->size_scale > 1.0f) {
+            *g_state->scale = cs::ScaleConfig::true_scale();
+        } else {
+            *g_state->scale = cs::ScaleConfig::display();
+        }
+        break;
+    case GLFW_KEY_O:        // toggle orbit trails
+        g_state->trails_visible = !g_state->trails_visible;
+        break;
+    }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -108,79 +169,142 @@ int main() {
         glDebugMessageCallback(gl_debug_callback, nullptr);
     }
 
-    glfwSetKeyCallback(window, [](GLFWwindow* w, int key, int, int action, int) {
-        if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-            glfwSetWindowShouldClose(w, GLFW_TRUE);
-    });
+    // ── Ephemeris ─────────────────────────────────────────────────────────────
+
+    cs::EphemerisProvider ephemeris(EPHEMERIS_PATH);
 
     // ── Scene setup ───────────────────────────────────────────────────────────
 
     cs::BodyRegistry registry;
-    registry.add(make_sun());
-    registry.add(make_earth());
+    cs::SimClock     clock;
+    const double     jd_start = clock.julianDate();
 
-    cs::SimClock clock;
-    cs::SimLoop  sim_loop{registry, clock, 50000.0};
+    // Helper: build a Body from data constants + ephemeris state vector.
+    auto make_body = [&](const cs::data::BodyData& d, int eph_id) {
+        cs::Body b;
+        b.name      = d.name;
+        b.mass      = d.mass_msun;
+        b.radius_km = d.radius_km;
+        b.color     = {d.r, d.g, d.b};
+        b.type      = cs::BodyType::SIMULATED;
+        if (eph_id == 0) {
+            b.position = {0.0, 0.0, 0.0};
+            b.velocity = {0.0, 0.0, 0.0};
+        } else {
+            const auto sv = ephemeris.getStateVector(eph_id, jd_start);
+            b.position = sv.position_au;
+            b.velocity = sv.velocity_au_yr;
+        }
+        return b;
+    };
 
-    cs::Camera camera;
+    registry.add(make_body(cs::data::SUN,     0));
+    registry.add(make_body(cs::data::MERCURY, cs::EphemerisProvider::MERCURY));
+    registry.add(make_body(cs::data::VENUS,   cs::EphemerisProvider::VENUS));
+    registry.add(make_body(cs::data::EARTH,   cs::EphemerisProvider::EARTH));
+    registry.add(make_body(cs::data::MARS,    cs::EphemerisProvider::MARS));
+    registry.add(make_body(cs::data::LUNA,    cs::EphemerisProvider::MOON));
+
+    cs::SimLoop sim_loop{registry, clock};  // default 50,000×
+    cs::Camera  camera;
     camera.attachToWindow(window);
 
-    cs::Sphere     sphere;
-    cs::Starfield  starfield;
-    cs::AxisGizmo  axis_gizmo;
-    cs::OrbitPath  earth_orbit{1.0f};
+    // ── Scale & app state ─────────────────────────────────────────────────────
+
+    cs::ScaleConfig scale = cs::ScaleConfig::display();
+
+    AppState state;
+    state.sim_loop = &sim_loop;
+    state.scale    = &scale;
+    state.window   = window;
+    g_state        = &state;
+    glfwSetKeyCallback(window, key_callback);
+    update_title(window, sim_loop.warpFactor());
+
+    // ── Render objects ────────────────────────────────────────────────────────
+
+    cs::Sphere    sphere;
+    cs::Starfield starfield;
+    cs::AxisGizmo axis_gizmo;
+    cs::SunGlow   sun_glow;
+
+    // One static orbit ring per non-Moon body (Moon orbit tiny, skip for clarity)
+    std::vector<cs::OrbitPath> orbit_rings;
+    for (const auto& b : registry.bodies()) {
+        if (b.name != "Sun" && b.name != "Moon") {
+            const float r = static_cast<float>(glm::length(b.position));
+            orbit_rings.emplace_back(r);
+        }
+    }
+
+    // One trail per non-Sun body
+    std::map<std::string, cs::OrbitTrail> trails;
+    for (const auto& b : registry.bodies()) {
+        if (b.name != "Sun") {
+            trails.emplace(std::piecewise_construct,
+                           std::forward_as_tuple(b.name),
+                           std::forward_as_tuple(500));
+        }
+    }
+
+    // ── Shaders ───────────────────────────────────────────────────────────────
 
     cs::ShaderProgram phong_shader;
     if (!phong_shader.load(SHADERS_DIR "phong.vert", SHADERS_DIR "phong.frag")) {
         fprintf(stderr, "Failed to load Phong shaders\n");
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return EXIT_FAILURE;
+        glfwDestroyWindow(window);  glfwTerminate();  return EXIT_FAILURE;
     }
-
     cs::ShaderProgram star_shader;
     if (!star_shader.load(SHADERS_DIR "starfield.vert", SHADERS_DIR "starfield.frag")) {
         fprintf(stderr, "Failed to load starfield shaders\n");
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return EXIT_FAILURE;
+        glfwDestroyWindow(window);  glfwTerminate();  return EXIT_FAILURE;
     }
-
     cs::ShaderProgram flat_shader;
     if (!flat_shader.load(SHADERS_DIR "flat.vert", SHADERS_DIR "flat.frag")) {
         fprintf(stderr, "Failed to load flat shaders\n");
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return EXIT_FAILURE;
+        glfwDestroyWindow(window);  glfwTerminate();  return EXIT_FAILURE;
+    }
+    cs::ShaderProgram trail_shader;
+    if (!trail_shader.load(SHADERS_DIR "trail.vert", SHADERS_DIR "trail.frag")) {
+        fprintf(stderr, "Failed to load trail shaders\n");
+        glfwDestroyWindow(window);  glfwTerminate();  return EXIT_FAILURE;
+    }
+    cs::ShaderProgram billboard_shader;
+    if (!billboard_shader.load(SHADERS_DIR "billboard.vert", SHADERS_DIR "billboard.frag")) {
+        fprintf(stderr, "Failed to load billboard shaders\n");
+        glfwDestroyWindow(window);  glfwTerminate();  return EXIT_FAILURE;
     }
 
-    // Required for gl_PointSize in vertex shader (Core Profile).
     glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
     glEnable(GL_DEPTH_TEST);
-    // Alpha blending for star brightness
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // Fixed directional light (approximates Sun for Phase 1 — replaced in Phase 2)
-    const glm::vec3 light_dir   = glm::normalize(glm::vec3(1.0f, 1.0f, 0.5f));
+    // Light direction follows the Sun's current display position each frame.
     const glm::vec3 light_color = {1.0f, 1.0f, 0.95f};
 
-    // Display-scale multipliers: bodies are tiny in AU — scale up for visibility.
-    // Sun: render at 0.05 AU radius. Earth: 0.02 AU radius.
-    // Phase 2 introduces a proper ScaleConfig system.
-    const float sun_render_r   = 0.05f;
-    const float earth_render_r = 0.02f;
-
-    double last_time = glfwGetTime();
+    double last_time      = glfwGetTime();
+    int    trail_push_acc = 0;  // push trail every 10 sim steps for performance
 
     while (!glfwWindowShouldClose(window)) {
-        const double now   = glfwGetTime();
-        const float  dt    = static_cast<float>(now - last_time);
-        last_time          = now;
+        const double now = glfwGetTime();
+        const float  dt  = static_cast<float>(now - last_time);
+        last_time        = now;
 
         glfwPollEvents();
         camera.update(window, dt);
+
+        // Advance simulation and push trail positions every 10 substeps.
+        const auto& bodies_before = registry.bodies();
         sim_loop.tick(static_cast<double>(dt));
+        ++trail_push_acc;
+        if (trail_push_acc >= 10) {
+            trail_push_acc = 0;
+            for (const auto& b : registry.bodies()) {
+                auto it = trails.find(b.name);
+                if (it != trails.end()) {
+                    it->second.push(b.position);
+                }
+            }
+        }
 
         int fb_w, fb_h;
         glfwGetFramebufferSize(window, &fb_w, &fb_h);
@@ -193,44 +317,72 @@ int main() {
         const glm::mat4 view   = camera.view();
         const glm::mat4 proj   = camera.projection(aspect);
 
-        // ── Starfield (depth writes off, drawn first) ─────────────────────────
+        // Find Sun display position for lighting and glow.
+        glm::vec3 sun_display_pos{0.0f};
+        for (const auto& b : registry.bodies()) {
+            if (b.name == "Sun") {
+                sun_display_pos = glm::vec3(b.position) * scale.distance_scale;
+                break;
+            }
+        }
+        const glm::vec3 light_dir = glm::normalize(camera.position() - sun_display_pos);
+
+        // ── Starfield ─────────────────────────────────────────────────────────
         starfield.draw(view, proj, star_shader);
 
-        // ── Planets ───────────────────────────────────────────────────────────
+        // ── Orbit rings ───────────────────────────────────────────────────────
+        for (auto& ring : orbit_rings) {
+            ring.draw(view, proj, flat_shader);
+        }
+
+        // ── Orbit trails ──────────────────────────────────────────────────────
+        if (state.trails_visible) {
+            for (const auto& b : registry.bodies()) {
+                auto it = trails.find(b.name);
+                if (it != trails.end()) {
+                    it->second.draw(view, proj, trail_shader, b.color);
+                }
+            }
+        }
+
+        // ── Sun glow (additive, before depth-sensitive geometry) ──────────────
+        sun_glow.draw(view, proj, sun_display_pos, camera.radius(), billboard_shader);
+
+        // ── Planets (Phong shading) ───────────────────────────────────────────
         phong_shader.use();
-        set_uniform_vec3(phong_shader.id(), "light_dir",   light_dir);
-        set_uniform_vec3(phong_shader.id(), "light_color", light_color);
-        set_uniform_mat4(phong_shader.id(), "view",        view);
-        set_uniform_mat4(phong_shader.id(), "projection",  proj);
-        set_uniform_vec3(phong_shader.id(), "view_pos",    camera.position());
+        set_vec3(phong_shader.id(), "light_dir",   light_dir);
+        set_vec3(phong_shader.id(), "light_color", light_color);
+        set_mat4(phong_shader.id(), "view",        view);
+        set_mat4(phong_shader.id(), "projection",  proj);
+        set_vec3(phong_shader.id(), "view_pos",    camera.position());
 
-        const auto& bodies = registry.bodies();
-        for (const auto& body : bodies) {
-            const float render_r = (body.name == "Sun") ? sun_render_r : earth_render_r;
+        // Kilometre-per-AU constant for radius conversion.
+        constexpr float kKmPerAU = 1.495978707e8f;
 
-            glm::mat4 model = glm::translate(glm::mat4{1.0f},
-                                              glm::vec3(body.position));
-            model = glm::scale(model, glm::vec3(render_r));
+        glEnable(GL_DEPTH_TEST);
+        for (const auto& b : registry.bodies()) {
+            const float radius_au     = static_cast<float>(b.radius_km) / kKmPerAU;
+            const float display_r     = radius_au * scale.size_scale;
+            const glm::vec3 display_p = glm::vec3(b.position) * scale.distance_scale;
 
+            glm::mat4 model = glm::translate(glm::mat4{1.0f}, display_p);
+            model           = glm::scale(model, glm::vec3(display_r));
             const glm::mat3 normal_mat = glm::mat3(glm::transpose(glm::inverse(model)));
 
-            set_uniform_mat4(phong_shader.id(), "model",         model);
-            set_uniform_vec3(phong_shader.id(), "object_color",  body.color);
+            set_mat4(phong_shader.id(), "model",        model);
+            set_vec3(phong_shader.id(), "object_color", b.color);
             glUniformMatrix3fv(glGetUniformLocation(phong_shader.id(), "normal_matrix"),
                                1, GL_FALSE, glm::value_ptr(normal_mat));
-
             sphere.draw();
         }
 
-        // ── Orbit path ────────────────────────────────────────────────────────
-        earth_orbit.draw(view, proj, flat_shader);
-
-        // ── Axis gizmo (world origin, always on top) ─────────────────────────
+        // ── Axis gizmo ────────────────────────────────────────────────────────
         axis_gizmo.draw(view, proj, flat_shader);
 
         glfwSwapBuffers(window);
     }
 
+    g_state = nullptr;
     glfwDestroyWindow(window);
     glfwTerminate();
     return EXIT_SUCCESS;

@@ -14,6 +14,9 @@ public:
 
     OrbitPath(const OrbitPath&)            = delete;
     OrbitPath& operator=(const OrbitPath&) = delete;
+    OrbitPath(OrbitPath&& o) noexcept
+        : vao_(o.vao_), vbo_(o.vbo_), segments_(o.segments_)
+    { o.vao_ = 0; o.vbo_ = 0; }
 
     void draw(const glm::mat4& view, const glm::mat4& proj,
               const ShaderProgram& shader) const;
