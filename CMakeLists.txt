@@ -63,10 +63,9 @@ target_link_libraries(circa-solem-core PUBLIC glm::glm)
 add_executable(circa-solem
     src/main.cpp
     src/shader_program.cpp
-    # Phase 1 (added as implemented):
-    #   src/sphere.cpp
-    #   src/camera.cpp
-    #   src/starfield.cpp
+    src/sphere.cpp
+    src/camera.cpp
+    src/starfield.cpp
 )
 
 target_link_libraries(circa-solem PRIVATE
