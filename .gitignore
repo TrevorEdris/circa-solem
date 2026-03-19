@@ -42,3 +42,28 @@
 
 # Raw planning docs
 docs/planning/claude-chat-raw
+
+# Build output
+build/
+out/
+
+# Ephemeris and large data files
+data/*
+!data/.gitkeep
+
+# Large asset files
+assets/**/*.jpg
+assets/**/*.jpeg
+assets/**/*.png
+assets/**/*.hdr
+assets/**/*.tga
+!assets/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+*.user
