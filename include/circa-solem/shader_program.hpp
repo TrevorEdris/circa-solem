@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glad/gl.h>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -34,7 +35,8 @@ private:
 
     static GLuint compile_shader(GLenum type, const std::string& source,
                                   std::string_view filename);
-    static std::string read_file(std::string_view path);
+    // Returns nullopt if the file cannot be opened (distinct from an empty file).
+    static std::optional<std::string> read_file(std::string_view path);
 };
 
 } // namespace cs

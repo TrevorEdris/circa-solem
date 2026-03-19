@@ -47,7 +47,7 @@ add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE extern/stb)
 
 # ── Main executable ───────────────────────────────────────────────────────────
-file(GLOB_RECURSE SOURCES src/*.cpp)
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
 add_executable(circa-solem ${SOURCES})
 
 target_include_directories(circa-solem PRIVATE include)
