@@ -42,6 +42,18 @@ endif()
 add_library(glad STATIC extern/glad/src/gl.c)
 target_include_directories(glad PUBLIC extern/glad/include)
 
+# ── calceph (reads JPL DE440 .bsp SPICE files) ────────────────────────────────
+# Prefer brew/system install; fall back to gitlab source.
+find_package(calceph QUIET)
+if(NOT calceph_FOUND)
+    message(STATUS "calceph not found via find_package; fetching via FetchContent")
+    FetchContent_Declare(calceph
+        GIT_REPOSITORY https://gitlab.obspm.fr/calceph/calceph.git
+        GIT_TAG        v4.0.5
+    )
+    FetchContent_MakeAvailable(calceph)
+endif()
+
 # ── stb (header-only, committed to extern/stb/) ──────────────────────────────
 add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE extern/stb)
@@ -54,9 +66,10 @@ add_library(circa-solem-core STATIC
     src/integrator.cpp
     src/body_registry.cpp
     src/sim_loop.cpp
+    src/ephemeris_provider.cpp
 )
 target_include_directories(circa-solem-core PUBLIC include)
-target_link_libraries(circa-solem-core PUBLIC glm::glm)
+target_link_libraries(circa-solem-core PUBLIC glm::glm calceph)
 
 # ── Main executable ───────────────────────────────────────────────────────────
 # GL-dependent source files are listed explicitly here.
@@ -64,6 +77,8 @@ add_executable(circa-solem
     src/main.cpp
     src/axis_gizmo.cpp
     src/orbit_path.cpp
+    src/orbit_trail.cpp
+    src/sun_glow.cpp
     src/shader_program.cpp
     src/sphere.cpp
     src/camera.cpp
@@ -81,6 +96,7 @@ target_link_libraries(circa-solem PRIVATE
 # Absolute path to shaders dir; works with any out-of-source build directory
 target_compile_definitions(circa-solem PRIVATE
     SHADERS_DIR="${CMAKE_SOURCE_DIR}/shaders/"
+    EPHEMERIS_PATH="${CMAKE_SOURCE_DIR}/data/ephemeris/de440.bsp"
 )
 
 # ── Catch2 ────────────────────────────────────────────────────────────────────
