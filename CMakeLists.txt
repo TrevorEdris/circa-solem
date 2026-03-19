@@ -46,16 +46,34 @@ target_include_directories(glad PUBLIC extern/glad/include)
 add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE extern/stb)
 
-# ── Main executable ───────────────────────────────────────────────────────────
-file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
-add_executable(circa-solem ${SOURCES})
+# ── Core library (no OpenGL/GLFW — testable without a display context) ────────
+# Non-GL source files are added here as each phase is implemented.
+# Tests link against circa-solem-core; GL-dependent code stays in the executable.
+add_library(circa-solem-core STATIC
+    src/sim_clock.cpp
+    src/integrator.cpp
+    src/body_registry.cpp
+    src/sim_loop.cpp
+)
+target_include_directories(circa-solem-core PUBLIC include)
+target_link_libraries(circa-solem-core PUBLIC glm::glm)
 
-target_include_directories(circa-solem PRIVATE include)
+# ── Main executable ───────────────────────────────────────────────────────────
+# GL-dependent source files are listed explicitly here.
+add_executable(circa-solem
+    src/main.cpp
+    src/axis_gizmo.cpp
+    src/orbit_path.cpp
+    src/shader_program.cpp
+    src/sphere.cpp
+    src/camera.cpp
+    src/starfield.cpp
+)
 
 target_link_libraries(circa-solem PRIVATE
+    circa-solem-core
     OpenGL::GL
     glfw
-    glm::glm
     glad
     stb
 )
@@ -64,6 +82,19 @@ target_link_libraries(circa-solem PRIVATE
 target_compile_definitions(circa-solem PRIVATE
     SHADERS_DIR="${CMAKE_SOURCE_DIR}/shaders/"
 )
+
+# ── Catch2 ────────────────────────────────────────────────────────────────────
+find_package(Catch2 3 QUIET)
+if(NOT Catch2_FOUND)
+    message(STATUS "Catch2 not found via find_package; fetching via FetchContent")
+    FetchContent_Declare(Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG        v3.7.1
+    )
+    FetchContent_MakeAvailable(Catch2)
+endif()
+list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras"
+                              "${Catch2_DIR}/../../../lib/cmake/Catch2")
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 enable_testing()
