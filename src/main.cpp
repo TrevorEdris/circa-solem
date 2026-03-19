@@ -5,6 +5,7 @@
 #include "circa-solem/body.hpp"
 #include "circa-solem/body_registry.hpp"
 #include "circa-solem/camera.hpp"
+#include "circa-solem/constants.hpp"
 #include "circa-solem/ephemeris_provider.hpp"
 #include "circa-solem/orbit_path.hpp"
 #include "circa-solem/orbit_trail.hpp"
@@ -205,6 +206,15 @@ int main() {
     registry.add(make_body(cs::data::MARS,    cs::EphemerisProvider::MARS));
     registry.add(make_body(cs::data::LUNA,    cs::EphemerisProvider::MOON));
 
+    // Cache the Sun's index so we don't scan by name every frame.
+    int sun_idx = 0;
+    {
+        const auto& bodies = registry.bodies();
+        for (int i = 0; i < static_cast<int>(bodies.size()); ++i) {
+            if (bodies[i].name == "Sun") { sun_idx = i; break; }
+        }
+    }
+
     cs::SimLoop sim_loop{registry, clock};  // default 50,000×
     cs::Camera  camera;
     camera.attachToWindow(window);
@@ -293,7 +303,6 @@ int main() {
         camera.update(window, dt);
 
         // Advance simulation and push trail positions every 10 substeps.
-        const auto& bodies_before = registry.bodies();
         sim_loop.tick(static_cast<double>(dt));
         ++trail_push_acc;
         if (trail_push_acc >= 10) {
@@ -317,14 +326,9 @@ int main() {
         const glm::mat4 view   = camera.view();
         const glm::mat4 proj   = camera.projection(aspect);
 
-        // Find Sun display position for lighting and glow.
-        glm::vec3 sun_display_pos{0.0f};
-        for (const auto& b : registry.bodies()) {
-            if (b.name == "Sun") {
-                sun_display_pos = glm::vec3(b.position) * scale.distance_scale;
-                break;
-            }
-        }
+        // Sun display position for lighting and glow (cached index, no string scan).
+        const glm::vec3 sun_display_pos =
+            glm::vec3(registry.bodies()[sun_idx].position) * scale.distance_scale;
         const glm::vec3 light_dir = glm::normalize(camera.position() - sun_display_pos);
 
         // ── Starfield ─────────────────────────────────────────────────────────
@@ -356,12 +360,9 @@ int main() {
         set_mat4(phong_shader.id(), "projection",  proj);
         set_vec3(phong_shader.id(), "view_pos",    camera.position());
 
-        // Kilometre-per-AU constant for radius conversion.
-        constexpr float kKmPerAU = 1.495978707e8f;
-
         glEnable(GL_DEPTH_TEST);
         for (const auto& b : registry.bodies()) {
-            const float radius_au     = static_cast<float>(b.radius_km) / kKmPerAU;
+            const float radius_au     = static_cast<float>(b.radius_km) / static_cast<float>(cs::kKmPerAU);
             const float display_r     = radius_au * scale.size_scale;
             const glm::vec3 display_p = glm::vec3(b.position) * scale.distance_scale;
 

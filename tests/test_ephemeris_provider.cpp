@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 #include <cstdlib>
 #include <cmath>
+#include <stdexcept>
 
 using Catch::Matchers::WithinAbs;
 
@@ -57,4 +58,18 @@ TEST_CASE("EphemerisProvider — Moon is within 0.003 AU of Earth", "[ephemeris]
     double dist = glm::length(moon.position_au - earth.position_au);
     REQUIRE(dist > 0.001);  // Moon is not at Earth's center
     REQUIRE(dist < 0.003);  // Moon is within 0.003 AU of Earth
+}
+
+TEST_CASE("EphemerisProvider — invalid body ID throws runtime_error", "[ephemeris]") {
+    cs::EphemerisProvider ep(de440_path());
+    // NAIF ID 9999 does not exist in DE440; calceph_compute_unit should return 0.
+    REQUIRE_THROWS_AS(ep.getStateVector(9999, 2451545.0), std::runtime_error);
+}
+
+TEST_CASE("EphemerisProvider — Earth velocity at J2000 ≈ 6.28 AU/yr", "[ephemeris]") {
+    cs::EphemerisProvider ep(de440_path());
+    // Earth mean orbital speed: 2π AU / 1 yr ≈ 6.283 AU/yr
+    auto sv = ep.getStateVector(cs::EphemerisProvider::EARTH, 2451545.0);
+    double speed = glm::length(sv.velocity_au_yr);
+    REQUIRE_THAT(speed, WithinAbs(6.283, 0.2));
 }

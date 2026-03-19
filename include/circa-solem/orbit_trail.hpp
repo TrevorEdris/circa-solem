@@ -19,6 +19,8 @@ public:
     ~OrbitTrail();
     OrbitTrail(const OrbitTrail&)            = delete;
     OrbitTrail& operator=(const OrbitTrail&) = delete;
+    OrbitTrail(OrbitTrail&&)                 = delete;
+    OrbitTrail& operator=(OrbitTrail&&)      = delete;
 
     void push(const glm::dvec3& world_pos);
     void draw(const glm::mat4& view, const glm::mat4& proj,
@@ -30,6 +32,7 @@ private:
     int              head_  = 0;
     int              count_ = 0;
     std::vector<glm::vec3> positions_;
+    std::vector<glm::vec3> scratch_;   // reorder buffer reused each upload_gpu()
 
     GLuint vao_       = 0;
     GLuint vbo_pos_   = 0;

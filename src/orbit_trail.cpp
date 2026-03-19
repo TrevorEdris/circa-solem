@@ -11,6 +11,7 @@ namespace cs {
 OrbitTrail::OrbitTrail(int capacity)
     : capacity_(capacity)
     , positions_(capacity)
+    , scratch_(capacity)
 {
     glGenVertexArrays(1, &vao_);
     glGenBuffers(1, &vbo_pos_);
@@ -61,15 +62,14 @@ void OrbitTrail::upload_gpu() {
     // Oldest is at head_ when the buffer is full (count_ == capacity_).
     const int oldest = (count_ < capacity_) ? 0 : head_;
 
-    std::vector<glm::vec3> ordered(count_);
     for (int i = 0; i < count_; ++i) {
-        ordered[i] = positions_[(oldest + i) % capacity_];
+        scratch_[i] = positions_[(oldest + i) % capacity_];
     }
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo_pos_);
     glBufferSubData(GL_ARRAY_BUFFER, 0,
                     count_ * static_cast<GLsizei>(sizeof(glm::vec3)),
-                    ordered.data());
+                    scratch_.data());
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 

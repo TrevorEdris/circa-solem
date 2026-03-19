@@ -1,4 +1,5 @@
 #include "circa-solem/ephemeris_provider.hpp"
+#include "circa-solem/constants.hpp"
 
 #include <calceph.h>
 
@@ -31,7 +32,6 @@ EphemerisProvider::getStateVector(int body_id, double julian_date) const {
     // we convert manually using the IAU 2012 definition below.
     // CALCEPH_USE_NAIFID → target/center use NAIF IDs (Earth=399, Sun=10, etc.).
     constexpr int kUnits = CALCEPH_UNIT_KM | CALCEPH_UNIT_DAY | CALCEPH_USE_NAIFID;
-    constexpr double kKmPerAU = 1.495978707e8;  // km/AU (IAU 2012)
 
     std::array<double, 6> PV{};
     const int rc = calceph_compute_unit(static_cast<t_calcephbin*>(pbd_),

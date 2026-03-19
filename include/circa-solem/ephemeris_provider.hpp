@@ -18,8 +18,10 @@ public:
     explicit EphemerisProvider(const std::string& de440_path);
     ~EphemerisProvider();
 
-    EphemerisProvider(const EphemerisProvider&) = delete;
+    EphemerisProvider(const EphemerisProvider&)            = delete;
     EphemerisProvider& operator=(const EphemerisProvider&) = delete;
+    EphemerisProvider(EphemerisProvider&&)                 = delete;
+    EphemerisProvider& operator=(EphemerisProvider&&)      = delete;
 
     struct StateVector {
         glm::dvec3 position_au;    // AU, ecliptic J2000 Y-up (orbit in XZ plane)

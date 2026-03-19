@@ -58,11 +58,13 @@ void SunGlow::draw(const glm::mat4& view, const glm::mat4& proj,
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);  // additive
+    glDepthMask(GL_FALSE);              // don't let transparent corners corrupt depth buffer
 
     glBindVertexArray(vao_);
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
     glBindVertexArray(0);
 
+    glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
 }
 
