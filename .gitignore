@@ -39,3 +39,6 @@
 
 # debug information files
 *.dwo
+
+# Raw planning docs
+docs/planning/claude-chat-raw
