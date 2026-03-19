@@ -51,10 +51,9 @@ target_include_directories(stb INTERFACE extern/stb)
 # Tests link against circa-solem-core; GL-dependent code stays in the executable.
 add_library(circa-solem-core STATIC
     src/sim_clock.cpp
-    # Phase 1 (added as implemented):
-    #   src/integrator.cpp
-    #   src/body_registry.cpp
-    #   src/sim_loop.cpp
+    src/integrator.cpp
+    src/body_registry.cpp
+    src/sim_loop.cpp
 )
 target_include_directories(circa-solem-core PUBLIC include)
 target_link_libraries(circa-solem-core PUBLIC glm::glm)
