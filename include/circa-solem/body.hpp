@@ -17,6 +17,7 @@ struct Body {
     glm::dvec3   position   = {};     // AU
     glm::dvec3   velocity   = {};     // AU / Julian year
     glm::vec3    color      = {1.0f, 1.0f, 1.0f};
+    std::string  parent;       // empty = orbits Sun; non-empty = name of parent body
     BodyType     type       = BodyType::SIMULATED;
 };
 

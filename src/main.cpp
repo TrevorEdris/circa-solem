@@ -173,7 +173,7 @@ int main() {
 
     // ── Ephemeris ─────────────────────────────────────────────────────────────
 
-    cs::EphemerisProvider ephemeris(EPHEMERIS_PATH);
+    cs::EphemerisProvider ephemeris(EPHEMERIS_DIR);
 
     // ── Scene setup ───────────────────────────────────────────────────────────
 
@@ -181,31 +181,65 @@ int main() {
     cs::SimClock     clock;
     const double     jd_start = clock.julianDate();
 
-    // Helper: build a Body from data constants + ephemeris state vector.
-    auto make_body = [&](const cs::data::BodyData& d, int eph_id) {
+    // Data-driven body registration: {data, naif_id, parent_name}
+    struct BodyInit {
+        const cs::data::BodyData& data;
+        int   naif_id;
+        const char* parent;  // nullptr = orbits Sun
+    };
+
+    const BodyInit body_inits[] = {
+        // Sun (sentinel ID 0 → placed at origin)
+        {cs::data::SUN,      0,                                nullptr},
+        // Inner planets
+        {cs::data::MERCURY,  cs::EphemerisProvider::MERCURY,   nullptr},
+        {cs::data::VENUS,    cs::EphemerisProvider::VENUS,     nullptr},
+        {cs::data::EARTH,    cs::EphemerisProvider::EARTH,     nullptr},
+        {cs::data::MARS,     cs::EphemerisProvider::MARS,      nullptr},
+        {cs::data::LUNA,     cs::EphemerisProvider::MOON,      "Earth"},
+        // Outer planets
+        {cs::data::JUPITER,  cs::EphemerisProvider::JUPITER,   nullptr},
+        {cs::data::SATURN,   cs::EphemerisProvider::SATURN,    nullptr},
+        {cs::data::URANUS,   cs::EphemerisProvider::URANUS,    nullptr},
+        {cs::data::NEPTUNE,  cs::EphemerisProvider::NEPTUNE,   nullptr},
+        // Dwarf planets
+        {cs::data::PLUTO,    cs::EphemerisProvider::PLUTO,     nullptr},
+        {cs::data::CERES,    cs::EphemerisProvider::CERES,     nullptr},
+        // Galilean moons
+        {cs::data::IO,       cs::EphemerisProvider::IO,        "Jupiter"},
+        {cs::data::EUROPA,   cs::EphemerisProvider::EUROPA,    "Jupiter"},
+        {cs::data::GANYMEDE, cs::EphemerisProvider::GANYMEDE,  "Jupiter"},
+        {cs::data::CALLISTO, cs::EphemerisProvider::CALLISTO,  "Jupiter"},
+        // Saturnian moons
+        {cs::data::TITAN,    cs::EphemerisProvider::TITAN,     "Saturn"},
+        {cs::data::RHEA,     cs::EphemerisProvider::RHEA,      "Saturn"},
+        // Uranian moons
+        {cs::data::TITANIA,  cs::EphemerisProvider::TITANIA,   "Uranus"},
+        {cs::data::OBERON,   cs::EphemerisProvider::OBERON,    "Uranus"},
+        // Neptunian moons
+        {cs::data::TRITON,   cs::EphemerisProvider::TRITON,    "Neptune"},
+        // Plutonian moons
+        {cs::data::CHARON,   cs::EphemerisProvider::CHARON,    "Pluto"},
+    };
+
+    for (const auto& init : body_inits) {
         cs::Body b;
-        b.name      = d.name;
-        b.mass      = d.mass_msun;
-        b.radius_km = d.radius_km;
-        b.color     = {d.r, d.g, d.b};
+        b.name      = init.data.name;
+        b.mass      = init.data.mass_msun;
+        b.radius_km = init.data.radius_km;
+        b.color     = {init.data.r, init.data.g, init.data.b};
         b.type      = cs::BodyType::SIMULATED;
-        if (eph_id == 0) {
+        b.parent    = init.parent ? init.parent : "";
+        if (init.naif_id == 0) {
             b.position = {0.0, 0.0, 0.0};
             b.velocity = {0.0, 0.0, 0.0};
         } else {
-            const auto sv = ephemeris.getStateVector(eph_id, jd_start);
+            const auto sv = ephemeris.getStateVector(init.naif_id, jd_start);
             b.position = sv.position_au;
             b.velocity = sv.velocity_au_yr;
         }
-        return b;
-    };
-
-    registry.add(make_body(cs::data::SUN,     0));
-    registry.add(make_body(cs::data::MERCURY, cs::EphemerisProvider::MERCURY));
-    registry.add(make_body(cs::data::VENUS,   cs::EphemerisProvider::VENUS));
-    registry.add(make_body(cs::data::EARTH,   cs::EphemerisProvider::EARTH));
-    registry.add(make_body(cs::data::MARS,    cs::EphemerisProvider::MARS));
-    registry.add(make_body(cs::data::LUNA,    cs::EphemerisProvider::MOON));
+        registry.add(std::move(b));
+    }
 
     // Cache the Sun's index so we don't scan by name every frame.
     int sun_idx = 0;
@@ -248,7 +282,9 @@ int main() {
     std::vector<glm::mat4>     ring_transforms;
 
     for (const auto& b : registry.bodies()) {
-        if (b.name != "Sun" && b.name != "Moon") {
+        // Orbit rings for bodies orbiting the Sun only (skip Sun itself and all moons).
+        // Moon orbit rings are sub-pixel at solar system scale; deferred to Phase 5.
+        if (b.name != "Sun" && b.parent.empty()) {
             const double r_mag = glm::length(b.position);
             const double v_sq  = glm::dot(b.velocity, b.velocity);
 
