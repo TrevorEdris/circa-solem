@@ -22,6 +22,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -375,10 +376,12 @@ int main() {
         }
 
         // ── Sun glow (additive, before depth-sensitive geometry) ──────────────
-        // Pass the Sun's rendered radius so the billboard wraps the sphere.
-        const float sun_display_radius =
-            static_cast<float>(cs::data::SUN.radius_km) / static_cast<float>(cs::kKmPerAU)
-            * scale.size_scale;
+        // The Sun's rendered radius is capped at 30× true scale regardless of
+        // size_scale — applying the full 1000× display scale (4.65 AU) would put
+        // the camera inside the sphere and produce the wrong visual result.
+        const float sun_true_radius =
+            static_cast<float>(cs::data::SUN.radius_km) / static_cast<float>(cs::kKmPerAU);
+        const float sun_display_radius = sun_true_radius * std::min(scale.size_scale, 30.0f);
         sun_glow.draw(view, proj, sun_display_pos, sun_display_radius, billboard_shader);
 
         // ── Planets (Phong shading) ───────────────────────────────────────────
@@ -391,8 +394,11 @@ int main() {
 
         glEnable(GL_DEPTH_TEST);
         for (const auto& b : registry.bodies()) {
-            const float radius_au     = static_cast<float>(b.radius_km) / static_cast<float>(cs::kKmPerAU);
-            const float display_r     = radius_au * scale.size_scale;
+            const float radius_au = static_cast<float>(b.radius_km) / static_cast<float>(cs::kKmPerAU);
+            // Sun is capped at 30× true scale so the camera remains outside the sphere.
+            const float display_r = (b.name == "Sun")
+                ? radius_au * std::min(scale.size_scale, 30.0f)
+                : radius_au * scale.size_scale;
             const glm::vec3 display_p = glm::vec3(b.position) * scale.distance_scale;
 
             glm::mat4 model = glm::translate(glm::mat4{1.0f}, display_p);
