@@ -78,7 +78,11 @@ glm::mat4 Camera::view() const {
 }
 
 glm::mat4 Camera::projection(float aspect) const {
-    return glm::perspective(glm::radians(kFov), aspect, 0.001f, 1000.0f);
+    // Scale near/far planes with camera distance to maintain depth precision.
+    // Near = 0.1% of radius, Far = 1000× radius. Keeps the ratio under 1,000,000:1.
+    const float near = std::max(radius_ * 0.001f, 0.0001f);
+    const float far  = std::max(radius_ * 1000.0f, 500.0f);
+    return glm::perspective(glm::radians(kFov), aspect, near, far);
 }
 
 } // namespace cs
