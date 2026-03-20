@@ -43,10 +43,11 @@ SunGlow::~SunGlow() {
 
 void SunGlow::draw(const glm::mat4& view, const glm::mat4& proj,
                    const glm::vec3& sun_pos_world,
-                   float camera_dist_au,
+                   float sun_display_radius,
                    const ShaderProgram& shader) const {
-    // Size scales with camera distance so the glow looks consistent when zooming.
-    const float size = camera_dist_au * 0.3f;
+    // Billboard half-size = 1.4× the Sun's rendered sphere radius.
+    // This keeps the glow just outside the sphere surface at every zoom level.
+    const float size = sun_display_radius * 1.4f;
 
     shader.use();
     glUniformMatrix4fv(glGetUniformLocation(shader.id(), "view"),       1, GL_FALSE, glm::value_ptr(view));

@@ -238,12 +238,37 @@ int main() {
     cs::AxisGizmo axis_gizmo;
     cs::SunGlow   sun_glow;
 
-    // One static orbit ring per non-Moon body (Moon orbit tiny, skip for clarity)
+    // One static orbit ring per non-Moon body (Moon orbit tiny, skip for clarity).
+    // Ring radius = semi-major axis (vis-viva), ring plane = actual orbital plane (r×v).
+    // μ = GM_sun = 4π² AU³/yr² in our units.
+    constexpr double kMu = 4.0 * 3.14159265358979323846 * 3.14159265358979323846;
+
     std::vector<cs::OrbitPath> orbit_rings;
+    std::vector<glm::mat4>     ring_transforms;
+
     for (const auto& b : registry.bodies()) {
         if (b.name != "Sun" && b.name != "Moon") {
-            const float r = static_cast<float>(glm::length(b.position));
-            orbit_rings.emplace_back(r);
+            const double r  = glm::length(b.position);
+            const double v2 = glm::dot(b.velocity, b.velocity);
+            // Vis-viva: a = μr / (2μ − rv²)
+            const double a  = kMu * r / (2.0 * kMu - r * v2);
+            orbit_rings.emplace_back(static_cast<float>(a));
+
+            // Orbital plane normal = normalize(r × v). Ring is drawn in XZ plane
+            // with normal Y=(0,1,0); rotate Y to h_hat to match the actual plane.
+            const glm::dvec3 h     = glm::cross(b.position, b.velocity);
+            const glm::dvec3 h_hat = glm::normalize(h);
+            const glm::vec3  from  = {0.0f, 1.0f, 0.0f};
+            const glm::vec3  to    = glm::vec3(h_hat);
+            const glm::vec3  axis  = glm::cross(from, to);
+            const float      sin_a = glm::length(axis);
+            const float      cos_a = glm::dot(from, to);
+            glm::mat4 rot{1.0f};
+            if (sin_a > 1e-6f) {
+                rot = glm::rotate(glm::mat4{1.0f}, std::atan2(sin_a, cos_a),
+                                  glm::normalize(axis));
+            }
+            ring_transforms.push_back(rot);
         }
     }
 
@@ -335,8 +360,8 @@ int main() {
         starfield.draw(view, proj, star_shader);
 
         // ── Orbit rings ───────────────────────────────────────────────────────
-        for (auto& ring : orbit_rings) {
-            ring.draw(view, proj, flat_shader);
+        for (std::size_t i = 0; i < orbit_rings.size(); ++i) {
+            orbit_rings[i].draw(view, proj, flat_shader, ring_transforms[i]);
         }
 
         // ── Orbit trails ──────────────────────────────────────────────────────
@@ -350,7 +375,11 @@ int main() {
         }
 
         // ── Sun glow (additive, before depth-sensitive geometry) ──────────────
-        sun_glow.draw(view, proj, sun_display_pos, camera.radius(), billboard_shader);
+        // Pass the Sun's rendered radius so the billboard wraps the sphere.
+        const float sun_display_radius =
+            static_cast<float>(cs::data::SUN.radius_km) / static_cast<float>(cs::kKmPerAU)
+            * scale.size_scale;
+        sun_glow.draw(view, proj, sun_display_pos, sun_display_radius, billboard_shader);
 
         // ── Planets (Phong shading) ───────────────────────────────────────────
         phong_shader.use();

@@ -18,8 +18,10 @@ public:
         : vao_(o.vao_), vbo_(o.vbo_), segments_(o.segments_)
     { o.vao_ = 0; o.vbo_ = 0; }
 
+    /// model: optional transform to tilt the ring to its orbital plane.
     void draw(const glm::mat4& view, const glm::mat4& proj,
-              const ShaderProgram& shader) const;
+              const ShaderProgram& shader,
+              const glm::mat4& model = glm::mat4{1.0f}) const;
 
 private:
     GLuint vao_      = 0;

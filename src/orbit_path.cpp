@@ -54,9 +54,10 @@ OrbitPath::~OrbitPath() {
 }
 
 void OrbitPath::draw(const glm::mat4& view, const glm::mat4& proj,
-                     const ShaderProgram& shader) const
+                     const ShaderProgram& shader,
+                     const glm::mat4& model) const
 {
-    const glm::mat4 mvp = proj * view;
+    const glm::mat4 mvp = proj * view * model;
 
     shader.use();
     glUniformMatrix4fv(glGetUniformLocation(shader.id(), "mvp"), 1, GL_FALSE,

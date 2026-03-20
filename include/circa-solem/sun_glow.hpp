@@ -19,9 +19,11 @@ public:
     SunGlow(const SunGlow&)            = delete;
     SunGlow& operator=(const SunGlow&) = delete;
 
+    /// sun_display_radius: the Sun's rendered sphere radius in world-space AU.
+    /// The billboard is sized to 1.4× that radius so the glow wraps the sphere.
     void draw(const glm::mat4& view, const glm::mat4& proj,
               const glm::vec3& sun_pos_world,
-              float camera_dist_au,
+              float sun_display_radius,
               const ShaderProgram& shader) const;
 
 private:
