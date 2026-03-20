@@ -96,7 +96,7 @@ target_link_libraries(circa-solem PRIVATE
 # Absolute path to shaders dir; works with any out-of-source build directory
 target_compile_definitions(circa-solem PRIVATE
     SHADERS_DIR="${CMAKE_SOURCE_DIR}/shaders/"
-    EPHEMERIS_PATH="${CMAKE_SOURCE_DIR}/data/ephemeris/de440.bsp"
+    EPHEMERIS_DIR="${CMAKE_SOURCE_DIR}/data/ephemeris/"
 )
 
 # ── Catch2 ────────────────────────────────────────────────────────────────────

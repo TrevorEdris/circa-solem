@@ -74,15 +74,70 @@ static void update_title(GLFWwindow* w, double warp) {
 // ── Per-frame state accessible from GLFW callbacks ────────────────────────────
 
 struct AppState {
-    cs::SimLoop*   sim_loop      = nullptr;
-    cs::ScaleConfig* scale       = nullptr;
-    int            warp_idx      = 6;   // default 50,000×
-    int            prev_warp_idx = 6;
-    bool           trails_visible = true;
-    GLFWwindow*    window         = nullptr;
+    cs::SimLoop*      sim_loop       = nullptr;
+    cs::ScaleConfig*  scale          = nullptr;
+    cs::Camera*       camera         = nullptr;
+    cs::BodyRegistry* registry       = nullptr;
+    int               warp_idx       = 6;   // default 50,000×
+    int               prev_warp_idx  = 6;
+    bool              trails_visible = true;
+    int               focus_body_idx = -1;  // -1 = origin (no body focus)
+    GLFWwindow*       window         = nullptr;
+    bool              click_pending  = false;
+    double            click_x        = 0.0;
+    double            click_y        = 0.0;
 };
 
 static AppState* g_state = nullptr;
+
+// Compute a good zoom radius for focusing on a body.
+// Bodies with moons get a wider view; others get ~10× their display radius.
+static float zoomRadiusForBody(const cs::Body& b, float size_scale) {
+    const float radius_au = static_cast<float>(b.radius_km) / static_cast<float>(cs::kKmPerAU);
+    const float display_r = radius_au * size_scale;
+    // For gas giants / planets with known moon systems, use a wider radius
+    if (b.name == "Jupiter") return 0.05f;   // shows Galilean moons (~0.013 AU max)
+    if (b.name == "Saturn")  return 0.02f;   // shows Titan (~0.008 AU)
+    if (b.name == "Uranus")  return 0.005f;  // shows Titania/Oberon (~0.004 AU)
+    if (b.name == "Neptune") return 0.005f;  // shows Triton (~0.002 AU)
+    if (b.name == "Pluto")   return 0.001f;  // shows Charon
+    if (b.name == "Earth")   return 0.01f;   // shows Moon (~0.0026 AU)
+    // Default: 10× display radius, clamped to at least 0.02 AU
+    return std::max(display_r * 10.0f, 0.02f);
+}
+
+static void focus_on_body(int body_idx) {
+    if (!g_state || !g_state->camera || !g_state->registry) return;
+    const auto& bodies = g_state->registry->bodies();
+    if (body_idx < 0 || body_idx >= static_cast<int>(bodies.size())) return;
+
+    const auto& b = bodies[body_idx];
+    const glm::vec3 pos = glm::vec3(b.position) * g_state->scale->distance_scale;
+    g_state->camera->setFocus(pos);
+    g_state->camera->setRadius(zoomRadiusForBody(b, g_state->scale->size_scale));
+    g_state->focus_body_idx = body_idx;
+}
+
+static void mouse_button_callback(GLFWwindow* w, int button, int action, int mods) {
+    if (!g_state) return;
+    if (button != GLFW_MOUSE_BUTTON_LEFT || mods) return;
+
+    if (action == GLFW_PRESS) {
+        // Record press position to detect clicks vs. drags
+        glfwGetCursorPos(w, &g_state->click_x, &g_state->click_y);
+    } else if (action == GLFW_RELEASE) {
+        // Only pick if mouse barely moved (< 5 pixels) — otherwise it was a drag
+        double rx, ry;
+        glfwGetCursorPos(w, &rx, &ry);
+        const double dx = rx - g_state->click_x;
+        const double dy = ry - g_state->click_y;
+        if (dx * dx + dy * dy < 25.0) {
+            g_state->click_x = rx;
+            g_state->click_y = ry;
+            g_state->click_pending = true;
+        }
+    }
+}
 
 static void key_callback(GLFWwindow* w, int key, int /*scancode*/, int action, int /*mods*/) {
     if (!g_state) return;
@@ -129,6 +184,29 @@ static void key_callback(GLFWwindow* w, int key, int /*scancode*/, int action, i
     case GLFW_KEY_O:        // toggle orbit trails
         g_state->trails_visible = !g_state->trails_visible;
         break;
+    case GLFW_KEY_RIGHT_BRACKET: {  // ']' — focus next body
+        if (!g_state->registry) break;
+        const int n = static_cast<int>(g_state->registry->bodies().size());
+        int next = g_state->focus_body_idx + 1;
+        if (next >= n) next = 0;
+        focus_on_body(next);
+        break;
+    }
+    case GLFW_KEY_LEFT_BRACKET: {   // '[' — focus previous body
+        if (!g_state->registry) break;
+        const int n = static_cast<int>(g_state->registry->bodies().size());
+        int prev = g_state->focus_body_idx - 1;
+        if (prev < 0) prev = n - 1;
+        focus_on_body(prev);
+        break;
+    }
+    case GLFW_KEY_HOME: {           // Home — reset to origin view
+        if (!g_state->camera) break;
+        g_state->camera->setFocus({0.0f, 0.0f, 0.0f});
+        g_state->camera->setRadius(3.0f);
+        g_state->focus_body_idx = -1;
+        break;
+    }
     }
 }
 
@@ -173,7 +251,7 @@ int main() {
 
     // ── Ephemeris ─────────────────────────────────────────────────────────────
 
-    cs::EphemerisProvider ephemeris(EPHEMERIS_PATH);
+    cs::EphemerisProvider ephemeris(EPHEMERIS_DIR);
 
     // ── Scene setup ───────────────────────────────────────────────────────────
 
@@ -181,31 +259,65 @@ int main() {
     cs::SimClock     clock;
     const double     jd_start = clock.julianDate();
 
-    // Helper: build a Body from data constants + ephemeris state vector.
-    auto make_body = [&](const cs::data::BodyData& d, int eph_id) {
+    // Data-driven body registration: {data, naif_id, parent_name}
+    struct BodyInit {
+        const cs::data::BodyData& data;
+        int   naif_id;
+        const char* parent;  // nullptr = orbits Sun
+    };
+
+    const BodyInit body_inits[] = {
+        // Sun (sentinel ID 0 → placed at origin)
+        {cs::data::SUN,      0,                                nullptr},
+        // Inner planets
+        {cs::data::MERCURY,  cs::EphemerisProvider::MERCURY,   nullptr},
+        {cs::data::VENUS,    cs::EphemerisProvider::VENUS,     nullptr},
+        {cs::data::EARTH,    cs::EphemerisProvider::EARTH,     nullptr},
+        {cs::data::MARS,     cs::EphemerisProvider::MARS,      nullptr},
+        {cs::data::LUNA,     cs::EphemerisProvider::MOON,      "Earth"},
+        // Outer planets
+        {cs::data::JUPITER,  cs::EphemerisProvider::JUPITER,   nullptr},
+        {cs::data::SATURN,   cs::EphemerisProvider::SATURN,    nullptr},
+        {cs::data::URANUS,   cs::EphemerisProvider::URANUS,    nullptr},
+        {cs::data::NEPTUNE,  cs::EphemerisProvider::NEPTUNE,   nullptr},
+        // Dwarf planets
+        {cs::data::PLUTO,    cs::EphemerisProvider::PLUTO,     nullptr},
+        {cs::data::CERES,    cs::EphemerisProvider::CERES,     nullptr},
+        // Galilean moons
+        {cs::data::IO,       cs::EphemerisProvider::IO,        "Jupiter"},
+        {cs::data::EUROPA,   cs::EphemerisProvider::EUROPA,    "Jupiter"},
+        {cs::data::GANYMEDE, cs::EphemerisProvider::GANYMEDE,  "Jupiter"},
+        {cs::data::CALLISTO, cs::EphemerisProvider::CALLISTO,  "Jupiter"},
+        // Saturnian moons
+        {cs::data::TITAN,    cs::EphemerisProvider::TITAN,     "Saturn"},
+        {cs::data::RHEA,     cs::EphemerisProvider::RHEA,      "Saturn"},
+        // Uranian moons
+        {cs::data::TITANIA,  cs::EphemerisProvider::TITANIA,   "Uranus"},
+        {cs::data::OBERON,   cs::EphemerisProvider::OBERON,    "Uranus"},
+        // Neptunian moons
+        {cs::data::TRITON,   cs::EphemerisProvider::TRITON,    "Neptune"},
+        // Plutonian moons
+        {cs::data::CHARON,   cs::EphemerisProvider::CHARON,    "Pluto"},
+    };
+
+    for (const auto& init : body_inits) {
         cs::Body b;
-        b.name      = d.name;
-        b.mass      = d.mass_msun;
-        b.radius_km = d.radius_km;
-        b.color     = {d.r, d.g, d.b};
+        b.name      = init.data.name;
+        b.mass      = init.data.mass_msun;
+        b.radius_km = init.data.radius_km;
+        b.color     = {init.data.r, init.data.g, init.data.b};
         b.type      = cs::BodyType::SIMULATED;
-        if (eph_id == 0) {
+        b.parent    = init.parent ? init.parent : "";
+        if (init.naif_id == 0) {
             b.position = {0.0, 0.0, 0.0};
             b.velocity = {0.0, 0.0, 0.0};
         } else {
-            const auto sv = ephemeris.getStateVector(eph_id, jd_start);
+            const auto sv = ephemeris.getStateVector(init.naif_id, jd_start);
             b.position = sv.position_au;
             b.velocity = sv.velocity_au_yr;
         }
-        return b;
-    };
-
-    registry.add(make_body(cs::data::SUN,     0));
-    registry.add(make_body(cs::data::MERCURY, cs::EphemerisProvider::MERCURY));
-    registry.add(make_body(cs::data::VENUS,   cs::EphemerisProvider::VENUS));
-    registry.add(make_body(cs::data::EARTH,   cs::EphemerisProvider::EARTH));
-    registry.add(make_body(cs::data::MARS,    cs::EphemerisProvider::MARS));
-    registry.add(make_body(cs::data::LUNA,    cs::EphemerisProvider::MOON));
+        registry.add(std::move(b));
+    }
 
     // Cache the Sun's index so we don't scan by name every frame.
     int sun_idx = 0;
@@ -227,9 +339,12 @@ int main() {
     AppState state;
     state.sim_loop = &sim_loop;
     state.scale    = &scale;
+    state.camera   = &camera;
+    state.registry = &registry;
     state.window   = window;
     g_state        = &state;
     glfwSetKeyCallback(window, key_callback);
+    glfwSetMouseButtonCallback(window, mouse_button_callback);
     update_title(window, sim_loop.warpFactor());
 
     // ── Render objects ────────────────────────────────────────────────────────
@@ -248,7 +363,9 @@ int main() {
     std::vector<glm::mat4>     ring_transforms;
 
     for (const auto& b : registry.bodies()) {
-        if (b.name != "Sun" && b.name != "Moon") {
+        // Orbit rings for bodies orbiting the Sun only (skip Sun itself and all moons).
+        // Moon orbit rings are sub-pixel at solar system scale; deferred to Phase 5.
+        if (b.name != "Sun" && b.parent.empty()) {
             const double r_mag = glm::length(b.position);
             const double v_sq  = glm::dot(b.velocity, b.velocity);
 
@@ -348,6 +465,20 @@ int main() {
         glfwPollEvents();
         camera.update(window, dt);
 
+        // If focused on a body, track its position each frame.
+        if (state.focus_body_idx >= 0) {
+            const auto& fb = registry.bodies()[state.focus_body_idx];
+            camera.setFocus(glm::vec3(fb.position) * scale.distance_scale);
+        }
+
+        // Cap effective warp speed when zoomed in so moon motion stays smooth.
+        // At 0.05 AU (Jupiter moons): max warp ≈ 1000×.
+        // At 3 AU (solar system): no cap (user-selected warp applies).
+        const double user_warp = kWarpLevels[state.warp_idx];
+        const double max_warp  = static_cast<double>(camera.radius()) * 20000.0;
+        const double eff_warp  = std::min(user_warp, max_warp);
+        sim_loop.setWarpFactor(eff_warp);
+
         // Advance simulation and push trail positions every 10 substeps.
         sim_loop.tick(static_cast<double>(dt));
         ++trail_push_acc;
@@ -377,6 +508,70 @@ int main() {
             glm::vec3(registry.bodies()[sun_idx].position) * scale.distance_scale;
         const glm::vec3 light_dir = glm::normalize(camera.position() - sun_display_pos);
 
+        // Moons are only visible when the camera is close enough to see them
+        // outside their parent's display sphere (< 1 AU zoom).
+        const bool show_moons = camera.radius() < 1.0f;
+
+        // When zoomed in close, reduce size_scale so bodies don't engulf the camera.
+        // At 0.05 AU (Jupiter moon view): effective scale ≈ 10×.
+        // At 3 AU (solar system view): effective scale = 1000× (unchanged).
+        const float effective_size_scale =
+            std::min(scale.size_scale, camera.radius() * 200.0f);
+
+        // ── Click-to-pick body ───────────────────────────────────────────────
+        if (state.click_pending) {
+            state.click_pending = false;
+
+            // Convert screen coords to NDC
+            int win_w, win_h;
+            glfwGetWindowSize(window, &win_w, &win_h);
+            const float ndc_x = static_cast<float>(2.0 * state.click_x / win_w - 1.0);
+            const float ndc_y = static_cast<float>(1.0 - 2.0 * state.click_y / win_h);
+
+            // Unproject to world-space ray
+            const glm::mat4 inv_vp = glm::inverse(proj * view);
+            const glm::vec4 near4 = inv_vp * glm::vec4(ndc_x, ndc_y, -1.0f, 1.0f);
+            const glm::vec4 far4  = inv_vp * glm::vec4(ndc_x, ndc_y,  1.0f, 1.0f);
+            const glm::vec3 near_pt = glm::vec3(near4) / near4.w;
+            const glm::vec3 far_pt  = glm::vec3(far4)  / far4.w;
+            const glm::vec3 ray_dir = glm::normalize(far_pt - near_pt);
+            const glm::vec3 ray_origin = near_pt;
+
+            // Test ray-sphere intersection for each body, pick closest hit
+            int    best_idx  = -1;
+            float  best_dist = 1e30f;
+            for (int i = 0; i < static_cast<int>(registry.bodies().size()); ++i) {
+                const auto& b = registry.bodies()[i];
+                if (!show_moons && !b.parent.empty()) continue;
+
+                const glm::vec3 center = glm::vec3(b.position) * scale.distance_scale;
+                const float radius_au = static_cast<float>(b.radius_km) / static_cast<float>(cs::kKmPerAU);
+                // Use display radius for picking (what the user sees)
+                float pick_r = (b.name == "Sun")
+                    ? radius_au * std::min(effective_size_scale, 30.0f)
+                    : radius_au * effective_size_scale;
+                // Minimum pick radius so small/distant bodies are clickable
+                pick_r = std::max(pick_r, 0.005f);
+
+                const glm::vec3 oc = ray_origin - center;
+                const float a_coeff = glm::dot(ray_dir, ray_dir);
+                const float b_coeff = 2.0f * glm::dot(oc, ray_dir);
+                const float c_coeff = glm::dot(oc, oc) - pick_r * pick_r;
+                const float disc = b_coeff * b_coeff - 4.0f * a_coeff * c_coeff;
+                if (disc >= 0.0f) {
+                    const float t = (-b_coeff - std::sqrt(disc)) / (2.0f * a_coeff);
+                    if (t > 0.0f && t < best_dist) {
+                        best_dist = t;
+                        best_idx  = i;
+                    }
+                }
+            }
+
+            if (best_idx >= 0) {
+                focus_on_body(best_idx);
+            }
+        }
+
         // ── Starfield ─────────────────────────────────────────────────────────
         starfield.draw(view, proj, star_shader);
 
@@ -388,6 +583,7 @@ int main() {
         // ── Orbit trails ──────────────────────────────────────────────────────
         if (state.trails_visible) {
             for (const auto& b : registry.bodies()) {
+                if (!show_moons && !b.parent.empty()) continue;
                 auto it = trails.find(b.name);
                 if (it != trails.end()) {
                     it->second.draw(view, proj, trail_shader, b.color);
@@ -401,7 +597,7 @@ int main() {
         // the camera inside the sphere and produce the wrong visual result.
         const float sun_true_radius =
             static_cast<float>(cs::data::SUN.radius_km) / static_cast<float>(cs::kKmPerAU);
-        const float sun_display_radius = sun_true_radius * std::min(scale.size_scale, 30.0f);
+        const float sun_display_radius = sun_true_radius * std::min(effective_size_scale, 30.0f);
         sun_glow.draw(view, proj, sun_display_pos, sun_display_radius, billboard_shader);
 
         // ── Planets (Phong shading) ───────────────────────────────────────────
@@ -414,11 +610,13 @@ int main() {
 
         glEnable(GL_DEPTH_TEST);
         for (const auto& b : registry.bodies()) {
+            if (!show_moons && !b.parent.empty()) continue;
+
             const float radius_au = static_cast<float>(b.radius_km) / static_cast<float>(cs::kKmPerAU);
             // Sun is capped at 30× true scale so the camera remains outside the sphere.
             const float display_r = (b.name == "Sun")
-                ? radius_au * std::min(scale.size_scale, 30.0f)
-                : radius_au * scale.size_scale;
+                ? radius_au * std::min(effective_size_scale, 30.0f)
+                : radius_au * effective_size_scale;
             const glm::vec3 display_p = glm::vec3(b.position) * scale.distance_scale;
 
             glm::mat4 model = glm::translate(glm::mat4{1.0f}, display_p);
