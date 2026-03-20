@@ -83,6 +83,9 @@ add_executable(circa-solem
     src/sphere.cpp
     src/camera.cpp
     src/starfield.cpp
+    src/texture.cpp
+    src/ring_mesh.cpp
+    src/particle_field.cpp
 )
 
 target_link_libraries(circa-solem PRIVATE
@@ -97,6 +100,7 @@ target_link_libraries(circa-solem PRIVATE
 target_compile_definitions(circa-solem PRIVATE
     SHADERS_DIR="${CMAKE_SOURCE_DIR}/shaders/"
     EPHEMERIS_DIR="${CMAKE_SOURCE_DIR}/data/ephemeris/"
+    TEXTURES_DIR="${CMAKE_SOURCE_DIR}/assets/textures/"
 )
 
 # ── Catch2 ────────────────────────────────────────────────────────────────────
