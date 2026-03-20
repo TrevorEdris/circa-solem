@@ -471,6 +471,14 @@ int main() {
             camera.setFocus(glm::vec3(fb.position) * scale.distance_scale);
         }
 
+        // Cap effective warp speed when zoomed in so moon motion stays smooth.
+        // At 0.05 AU (Jupiter moons): max warp ≈ 1000×.
+        // At 3 AU (solar system): no cap (user-selected warp applies).
+        const double user_warp = kWarpLevels[state.warp_idx];
+        const double max_warp  = static_cast<double>(camera.radius()) * 20000.0;
+        const double eff_warp  = std::min(user_warp, max_warp);
+        sim_loop.setWarpFactor(eff_warp);
+
         // Advance simulation and push trail positions every 10 substeps.
         sim_loop.tick(static_cast<double>(dt));
         ++trail_push_acc;
