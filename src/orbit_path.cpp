@@ -9,20 +9,33 @@
 
 namespace cs {
 
-OrbitPath::OrbitPath(float radius_au, int segments)
+OrbitPath::OrbitPath(float semi_major_axis, float eccentricity, float omega_rad,
+                     int segments)
     : segments_(segments)
 {
     std::vector<float> verts;
     verts.reserve(segments * 6);  // pos(xyz) + color(rgb) per vertex
 
-    const float r  = radius_au;
+    const float a  = semi_major_axis;
+    const float e  = eccentricity;
+    const float b  = a * std::sqrt(1.0f - e * e);   // semi-minor axis
+    const float c  = a * e;                           // focus offset from center
+    const float co = std::cos(omega_rad);
+    const float so = std::sin(omega_rad);
     const float pi = static_cast<float>(M_PI);
 
     for (int i = 0; i < segments; ++i) {
-        const float angle = 2.0f * pi * static_cast<float>(i) / static_cast<float>(segments);
-        verts.push_back(r * std::cos(angle));  // X
-        verts.push_back(0.0f);                 // Y (orbit in XZ plane)
-        verts.push_back(r * std::sin(angle));  // Z
+        // Parametric eccentric anomaly E ∈ [0, 2π)
+        const float E = 2.0f * pi * static_cast<float>(i) / static_cast<float>(segments);
+
+        // Ellipse relative to focus (Sun at origin), periapsis along +X before rotation
+        const float xl = a * std::cos(E) - c;   // local X (along periapsis)
+        const float zl = b * std::sin(E);        // local Z (perpendicular)
+
+        // Rotate by argument of periapsis ω around Y axis
+        verts.push_back(xl * co - zl * so);  // X
+        verts.push_back(0.0f);               // Y (orbit in XZ plane)
+        verts.push_back(xl * so + zl * co);  // Z
         // Dim white — visible but not distracting
         verts.push_back(0.4f);
         verts.push_back(0.4f);
@@ -54,9 +67,10 @@ OrbitPath::~OrbitPath() {
 }
 
 void OrbitPath::draw(const glm::mat4& view, const glm::mat4& proj,
-                     const ShaderProgram& shader) const
+                     const ShaderProgram& shader,
+                     const glm::mat4& model) const
 {
-    const glm::mat4 mvp = proj * view;
+    const glm::mat4 mvp = proj * view * model;
 
     shader.use();
     glUniformMatrix4fv(glGetUniformLocation(shader.id(), "mvp"), 1, GL_FALSE,

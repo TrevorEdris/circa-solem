@@ -26,6 +26,7 @@ public:
     glm::mat4 view()               const;
     glm::mat4 projection(float aspect) const;
     glm::vec3 position()           const;
+    float     radius()             const { return radius_; }
 
 private:
     static void scroll_callback(GLFWwindow* w, double xoff, double yoff);
