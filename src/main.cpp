@@ -249,11 +249,17 @@ int main() {
 
     for (const auto& b : registry.bodies()) {
         if (b.name != "Sun" && b.name != "Moon") {
-            const double r  = glm::length(b.position);
-            const double v2 = glm::dot(b.velocity, b.velocity);
-            // Vis-viva: a = μr / (2μ − rv²)
-            const double a  = kMu * r / (2.0 * kMu - r * v2);
-            orbit_rings.emplace_back(static_cast<float>(a));
+            const double r_mag = glm::length(b.position);
+            const double v_sq  = glm::dot(b.velocity, b.velocity);
+
+            // Semi-major axis (vis-viva)
+            const double a = kMu * r_mag / (2.0 * kMu - r_mag * v_sq);
+
+            // Eccentricity vector: points from focus toward periapsis
+            const double rdotv = glm::dot(b.position, b.velocity);
+            const glm::dvec3 e_vec =
+                ((v_sq - kMu / r_mag) * b.position - rdotv * b.velocity) / kMu;
+            const double e = glm::length(e_vec);
 
             // Orbital plane normal = normalize(r × v). Ring is drawn in XZ plane
             // with normal Y=(0,1,0); rotate Y to h_hat to match the actual plane.
@@ -270,6 +276,20 @@ int main() {
                                   glm::normalize(axis));
             }
             ring_transforms.push_back(rot);
+
+            // Argument of periapsis ω: angle of the eccentricity vector within
+            // the orbital plane. Transform e_vec back to the XZ frame (undo the
+            // plane-tilt rotation) and take atan2 in XZ.
+            float omega = 0.0f;
+            if (e > 1e-6) {
+                const glm::mat4 inv_rot = glm::transpose(rot);
+                const glm::vec3 e_local = glm::vec3(
+                    inv_rot * glm::vec4(glm::normalize(glm::vec3(e_vec)), 0.0f));
+                omega = std::atan2(e_local.z, e_local.x);
+            }
+
+            orbit_rings.emplace_back(
+                static_cast<float>(a), static_cast<float>(e), omega);
         }
     }
 
