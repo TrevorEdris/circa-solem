@@ -413,6 +413,10 @@ int main() {
             glm::vec3(registry.bodies()[sun_idx].position) * scale.distance_scale;
         const glm::vec3 light_dir = glm::normalize(camera.position() - sun_display_pos);
 
+        // Moons are only visible when the camera is close enough to see them
+        // outside their parent's display sphere (< 1 AU zoom).
+        const bool show_moons = camera.radius() < 1.0f;
+
         // ── Starfield ─────────────────────────────────────────────────────────
         starfield.draw(view, proj, star_shader);
 
@@ -424,6 +428,7 @@ int main() {
         // ── Orbit trails ──────────────────────────────────────────────────────
         if (state.trails_visible) {
             for (const auto& b : registry.bodies()) {
+                if (!show_moons && !b.parent.empty()) continue;
                 auto it = trails.find(b.name);
                 if (it != trails.end()) {
                     it->second.draw(view, proj, trail_shader, b.color);
@@ -450,6 +455,8 @@ int main() {
 
         glEnable(GL_DEPTH_TEST);
         for (const auto& b : registry.bodies()) {
+            if (!show_moons && !b.parent.empty()) continue;
+
             const float radius_au = static_cast<float>(b.radius_km) / static_cast<float>(cs::kKmPerAU);
             // Sun is capped at 30× true scale so the camera remains outside the sphere.
             const float display_r = (b.name == "Sun")
