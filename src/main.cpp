@@ -680,19 +680,22 @@ int main() {
         set_vec3(phong_shader.id(), "view_pos",    camera.position());
 
         glEnable(GL_DEPTH_TEST);
-        for (const auto& b : registry.bodies()) {
+        const auto& all_bodies = registry.bodies();
+        for (int bi = 0; bi < static_cast<int>(all_bodies.size()); ++bi) {
+            const auto& b = all_bodies[bi];
             if (!show_moons && !b.parent.empty()) continue;
 
             const float radius_au = static_cast<float>(b.radius_km) / static_cast<float>(cs::kKmPerAU);
             // Sun is capped at 30× true scale so the camera remains outside the sphere.
-            const float display_r = (b.name == "Sun")
+            const bool is_sun = (bi == sun_idx);
+            const float display_r = is_sun
                 ? radius_au * std::min(effective_size_scale, 30.0f)
                 : radius_au * effective_size_scale;
             const glm::vec3 display_p = glm::vec3(b.position) * scale.distance_scale;
 
             // Per-body light direction: from body toward the Sun.
-            // Sun itself is self-luminous — use a dummy direction so it's fully lit.
-            const glm::vec3 body_light_dir = (b.name == "Sun")
+            // Sun itself is self-luminous — use camera direction so it's always fully lit.
+            const glm::vec3 body_light_dir = is_sun
                 ? glm::normalize(camera.position() - display_p)
                 : glm::normalize(sun_display_pos - display_p);
             set_vec3(phong_shader.id(), "light_dir", body_light_dir);
@@ -736,6 +739,9 @@ int main() {
 
         glfwSwapBuffers(window);
     }
+
+    glDeleteTextures(1, &saturn_ring_tex);
+    glDeleteTextures(1, &faint_ring_tex);
 
     g_state = nullptr;
     glfwDestroyWindow(window);

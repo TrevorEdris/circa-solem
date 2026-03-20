@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cmath>
+#include <numbers>
 
 namespace cs {
 
@@ -9,9 +9,9 @@ inline constexpr double kKmPerAU = 1.495978707e8;
 
 // ── Planet axial tilts (obliquity to ecliptic, radians) ──────────────────────
 
-inline constexpr float kSaturnObliquity  = 26.73f  * static_cast<float>(M_PI) / 180.0f;
-inline constexpr float kUranusObliquity  = 97.77f  * static_cast<float>(M_PI) / 180.0f;
-inline constexpr float kNeptuneObliquity = 28.32f  * static_cast<float>(M_PI) / 180.0f;
+inline constexpr float kSaturnObliquity  = 26.73f  * std::numbers::pi_v<float> / 180.0f;
+inline constexpr float kUranusObliquity  = 97.77f  * std::numbers::pi_v<float> / 180.0f;
+inline constexpr float kNeptuneObliquity = 28.32f  * std::numbers::pi_v<float> / 180.0f;
 
 // ── Ring dimensions (km) ─────────────────────────────────────────────────────
 

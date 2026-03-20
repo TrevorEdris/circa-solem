@@ -13,7 +13,8 @@ void main() {
 
     // Use texture luminance as alpha (grayscale ring density maps)
     float alpha = tex.a;
-    // For RGB-only textures, derive alpha from luminance
+    // For RGB-only textures (alpha channel is 1.0), derive alpha from luminance.
+    // All ring textures in this project are either RGBA procedural or downloaded PNGs.
     if (alpha > 0.99) {
         alpha = dot(tex.rgb, vec3(0.299, 0.587, 0.114));
     }
