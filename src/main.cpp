@@ -17,6 +17,9 @@
 #include "circa-solem/sphere.hpp"
 #include "circa-solem/starfield.hpp"
 #include "circa-solem/sun_glow.hpp"
+#include "circa-solem/texture.hpp"
+#include "circa-solem/ring_mesh.hpp"
+#include "circa-solem/particle_field.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -420,6 +423,52 @@ int main() {
         }
     }
 
+    // ── Planet ring systems ─────────────────────────────────────────────────
+
+    // Saturn ring texture: try file first, fall back to procedural
+    GLuint saturn_ring_tex = cs::loadTexture(TEXTURES_DIR "saturn_ring.png");
+    if (!saturn_ring_tex) saturn_ring_tex = cs::generateSaturnRingTexture();
+
+    GLuint faint_ring_tex = cs::generateFaintRingTexture();
+
+    // Ring dimensions in AU
+    const float saturn_inner  = static_cast<float>(cs::kSaturnRingInnerKm  / cs::kKmPerAU);
+    const float saturn_outer  = static_cast<float>(cs::kSaturnRingOuterKm  / cs::kKmPerAU);
+    const float uranus_inner  = static_cast<float>(cs::kUranusRingInnerKm  / cs::kKmPerAU);
+    const float uranus_outer  = static_cast<float>(cs::kUranusRingOuterKm  / cs::kKmPerAU);
+    const float neptune_inner = static_cast<float>(cs::kNeptuneRingInnerKm / cs::kKmPerAU);
+    const float neptune_outer = static_cast<float>(cs::kNeptuneRingOuterKm / cs::kKmPerAU);
+
+    cs::RingMesh saturn_ring(saturn_inner, saturn_outer);
+    cs::RingMesh uranus_ring(uranus_inner, uranus_outer);
+    cs::RingMesh neptune_ring(neptune_inner, neptune_outer);
+
+    // Axial tilt rotations: rotate ring plane from ecliptic (XZ) by planet obliquity.
+    // Simplified: rotate around X axis by the obliquity angle.
+    const glm::mat4 saturn_tilt  = glm::rotate(glm::mat4{1.0f}, cs::kSaturnObliquity,  {1.0f, 0.0f, 0.0f});
+    const glm::mat4 uranus_tilt  = glm::rotate(glm::mat4{1.0f}, cs::kUranusObliquity,  {1.0f, 0.0f, 0.0f});
+    const glm::mat4 neptune_tilt = glm::rotate(glm::mat4{1.0f}, cs::kNeptuneObliquity, {1.0f, 0.0f, 0.0f});
+
+    // Cache body indices for Saturn, Uranus, Neptune (used each frame for ring position)
+    int saturn_idx = -1, uranus_idx = -1, neptune_idx = -1;
+    {
+        const auto& bodies = registry.bodies();
+        for (int i = 0; i < static_cast<int>(bodies.size()); ++i) {
+            if (bodies[i].name == "Saturn")  saturn_idx  = i;
+            if (bodies[i].name == "Uranus")  uranus_idx  = i;
+            if (bodies[i].name == "Neptune") neptune_idx = i;
+        }
+    }
+
+    // ── Asteroid & Kuiper belts ──────────────────────────────────────────────
+
+    cs::ParticleField asteroid_belt(
+        5000, 2.1f, 3.3f, 0.15f, 123,
+        {{2.06f, 0.02f}, {2.50f, 0.03f}, {2.82f, 0.02f}, {2.95f, 0.015f}, {3.27f, 0.03f}});
+
+    cs::ParticleField kuiper_belt(
+        2500, 30.0f, 55.0f, 0.17f, 456);
+
     // ── Shaders ───────────────────────────────────────────────────────────────
 
     cs::ShaderProgram phong_shader;
@@ -447,6 +496,16 @@ int main() {
         fprintf(stderr, "Failed to load billboard shaders\n");
         glfwDestroyWindow(window);  glfwTerminate();  return EXIT_FAILURE;
     }
+    cs::ShaderProgram ring_shader;
+    if (!ring_shader.load(SHADERS_DIR "ring.vert", SHADERS_DIR "ring.frag")) {
+        fprintf(stderr, "Failed to load ring shaders\n");
+        glfwDestroyWindow(window);  glfwTerminate();  return EXIT_FAILURE;
+    }
+    cs::ShaderProgram particle_shader;
+    if (!particle_shader.load(SHADERS_DIR "particle.vert", SHADERS_DIR "particle.frag")) {
+        fprintf(stderr, "Failed to load particle shaders\n");
+        glfwDestroyWindow(window);  glfwTerminate();  return EXIT_FAILURE;
+    }
 
     glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
     glEnable(GL_DEPTH_TEST);
@@ -466,9 +525,18 @@ int main() {
         camera.update(window, dt);
 
         // If focused on a body, track its position each frame.
+        // Release tracking if the user pans (shift+left-drag or middle-drag).
         if (state.focus_body_idx >= 0) {
-            const auto& fb = registry.bodies()[state.focus_body_idx];
-            camera.setFocus(glm::vec3(fb.position) * scale.distance_scale);
+            const bool left_held  = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT)   == GLFW_PRESS;
+            const bool mid_held   = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
+            const bool shift_held = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS
+                                 || glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+            if (mid_held || (left_held && shift_held)) {
+                state.focus_body_idx = -1;
+            } else {
+                const auto& fb = registry.bodies()[state.focus_body_idx];
+                camera.setFocus(glm::vec3(fb.position) * scale.distance_scale);
+            }
         }
 
         // Cap effective warp speed when zoomed in so moon motion stays smooth.
@@ -506,7 +574,7 @@ int main() {
         // Sun display position for lighting and glow (cached index, no string scan).
         const glm::vec3 sun_display_pos =
             glm::vec3(registry.bodies()[sun_idx].position) * scale.distance_scale;
-        const glm::vec3 light_dir = glm::normalize(camera.position() - sun_display_pos);
+        // light_dir is computed per-body in the planet loop below.
 
         // Moons are only visible when the camera is close enough to see them
         // outside their parent's display sphere (< 1 AU zoom).
@@ -575,6 +643,10 @@ int main() {
         // ── Starfield ─────────────────────────────────────────────────────────
         starfield.draw(view, proj, star_shader);
 
+        // ── Asteroid & Kuiper belts (faint background particles) ─────────────
+        asteroid_belt.draw(view, proj, particle_shader, {0.55f, 0.50f, 0.45f});
+        kuiper_belt.draw(view, proj, particle_shader, {0.45f, 0.50f, 0.55f});
+
         // ── Orbit rings ───────────────────────────────────────────────────────
         for (std::size_t i = 0; i < orbit_rings.size(); ++i) {
             orbit_rings[i].draw(view, proj, flat_shader, ring_transforms[i]);
@@ -602,7 +674,6 @@ int main() {
 
         // ── Planets (Phong shading) ───────────────────────────────────────────
         phong_shader.use();
-        set_vec3(phong_shader.id(), "light_dir",   light_dir);
         set_vec3(phong_shader.id(), "light_color", light_color);
         set_mat4(phong_shader.id(), "view",        view);
         set_mat4(phong_shader.id(), "projection",  proj);
@@ -619,6 +690,13 @@ int main() {
                 : radius_au * effective_size_scale;
             const glm::vec3 display_p = glm::vec3(b.position) * scale.distance_scale;
 
+            // Per-body light direction: from body toward the Sun.
+            // Sun itself is self-luminous — use a dummy direction so it's fully lit.
+            const glm::vec3 body_light_dir = (b.name == "Sun")
+                ? glm::normalize(camera.position() - display_p)
+                : glm::normalize(sun_display_pos - display_p);
+            set_vec3(phong_shader.id(), "light_dir", body_light_dir);
+
             glm::mat4 model = glm::translate(glm::mat4{1.0f}, display_p);
             model           = glm::scale(model, glm::vec3(display_r));
             const glm::mat3 normal_mat = glm::mat3(glm::transpose(glm::inverse(model)));
@@ -628,6 +706,29 @@ int main() {
             glUniformMatrix3fv(glGetUniformLocation(phong_shader.id(), "normal_matrix"),
                                1, GL_FALSE, glm::value_ptr(normal_mat));
             sphere.draw();
+        }
+
+        // ── Planet ring systems (alpha-blended, after opaque geometry) ────────
+        {
+            auto draw_planet_ring = [&](int body_idx, cs::RingMesh& mesh,
+                                        const glm::mat4& tilt, GLuint tex,
+                                        const glm::vec3& tint, float ring_scale) {
+                if (body_idx < 0) return;
+                const auto& body = registry.bodies()[body_idx];
+                const glm::vec3 pos = glm::vec3(body.position) * scale.distance_scale;
+                glm::mat4 model = glm::translate(glm::mat4{1.0f}, pos);
+                model = model * tilt;
+                model = glm::scale(model, glm::vec3(ring_scale));
+                mesh.draw(view, proj, ring_shader, model, tex, tint);
+            };
+
+            // Scale rings with effective_size_scale so they match planet size
+            draw_planet_ring(saturn_idx,  saturn_ring,  saturn_tilt,
+                             saturn_ring_tex, {0.90f, 0.85f, 0.70f}, effective_size_scale);
+            draw_planet_ring(uranus_idx,  uranus_ring,  uranus_tilt,
+                             faint_ring_tex, {0.70f, 0.80f, 0.85f}, effective_size_scale);
+            draw_planet_ring(neptune_idx, neptune_ring, neptune_tilt,
+                             faint_ring_tex, {0.55f, 0.60f, 0.75f}, effective_size_scale);
         }
 
         // ── Axis gizmo ────────────────────────────────────────────────────────
