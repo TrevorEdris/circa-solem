@@ -27,6 +27,10 @@ public:
     glm::mat4 projection(float aspect) const;
     glm::vec3 position()           const;
     float     radius()             const { return radius_; }
+    glm::vec3 focus()              const { return focus_; }
+
+    void setFocus(const glm::vec3& f) { focus_ = f; }
+    void setRadius(float r)           { radius_ = glm::clamp(r, kRadiusMin, kRadiusMax); }
 
 private:
     static void scroll_callback(GLFWwindow* w, double xoff, double yoff);
