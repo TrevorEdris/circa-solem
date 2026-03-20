@@ -504,6 +504,12 @@ int main() {
         // outside their parent's display sphere (< 1 AU zoom).
         const bool show_moons = camera.radius() < 1.0f;
 
+        // When zoomed in close, reduce size_scale so bodies don't engulf the camera.
+        // At 0.05 AU (Jupiter moon view): effective scale ≈ 10×.
+        // At 3 AU (solar system view): effective scale = 1000× (unchanged).
+        const float effective_size_scale =
+            std::min(scale.size_scale, camera.radius() * 200.0f);
+
         // ── Click-to-pick body ───────────────────────────────────────────────
         if (state.click_pending) {
             state.click_pending = false;
@@ -534,8 +540,8 @@ int main() {
                 const float radius_au = static_cast<float>(b.radius_km) / static_cast<float>(cs::kKmPerAU);
                 // Use display radius for picking (what the user sees)
                 float pick_r = (b.name == "Sun")
-                    ? radius_au * std::min(scale.size_scale, 30.0f)
-                    : radius_au * scale.size_scale;
+                    ? radius_au * std::min(effective_size_scale, 30.0f)
+                    : radius_au * effective_size_scale;
                 // Minimum pick radius so small/distant bodies are clickable
                 pick_r = std::max(pick_r, 0.005f);
 
@@ -583,7 +589,7 @@ int main() {
         // the camera inside the sphere and produce the wrong visual result.
         const float sun_true_radius =
             static_cast<float>(cs::data::SUN.radius_km) / static_cast<float>(cs::kKmPerAU);
-        const float sun_display_radius = sun_true_radius * std::min(scale.size_scale, 30.0f);
+        const float sun_display_radius = sun_true_radius * std::min(effective_size_scale, 30.0f);
         sun_glow.draw(view, proj, sun_display_pos, sun_display_radius, billboard_shader);
 
         // ── Planets (Phong shading) ───────────────────────────────────────────
@@ -601,8 +607,8 @@ int main() {
             const float radius_au = static_cast<float>(b.radius_km) / static_cast<float>(cs::kKmPerAU);
             // Sun is capped at 30× true scale so the camera remains outside the sphere.
             const float display_r = (b.name == "Sun")
-                ? radius_au * std::min(scale.size_scale, 30.0f)
-                : radius_au * scale.size_scale;
+                ? radius_au * std::min(effective_size_scale, 30.0f)
+                : radius_au * effective_size_scale;
             const glm::vec3 display_p = glm::vec3(b.position) * scale.distance_scale;
 
             glm::mat4 model = glm::translate(glm::mat4{1.0f}, display_p);
